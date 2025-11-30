@@ -17,16 +17,11 @@ export class AuthService {
       email: user.email,
       role: user.role,
     };
-
     const token = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
     return {
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        isOnboarded: user.isOnboarded,
-      },
+      user: { id: user.id, email: user.email, isOnboarded: user.isOnboarded },
     };
   }
 
@@ -34,8 +29,9 @@ export class AuthService {
     const user = await UserRepository.findByEmail(dto.email);
     if (!user) throw new Error('Invalid credentials');
 
-    // 🔥 FIX: password can be null in Prisma schema
+    // ---------- GUARD ----------
     if (!user.password) throw new Error('Invalid credentials');
+    // ---------------------------
 
     const match = await bcrypt.compare(dto.password, user.password);
     if (!match) throw new Error('Invalid credentials');
@@ -45,16 +41,11 @@ export class AuthService {
       email: user.email,
       role: user.role,
     };
-
     const token = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
     return {
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        isOnboarded: user.isOnboarded,
-      },
+      user: { id: user.id, email: user.email, isOnboarded: user.isOnboarded },
     };
   }
 }

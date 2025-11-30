@@ -1,6 +1,6 @@
 // src/repositories/user-repository.ts
 import { PrismaClient } from '@prisma/client';
-import { SignupDto } from '../types';
+import { SignupDto, LoginDto } from '../types';
 
 const prisma = new PrismaClient();
 
@@ -20,7 +20,22 @@ export class UserRepository {
     });
   }
 
+  static async updateUserPass(email: string, data: Partial<LoginDto>) {
+    return prisma.user.update({ where: { email }, data });
+  }
+
   static async findById(userId: string) {
     return prisma.user.findUnique({ where: { id: userId } });
+  }
+
+  // ADD THIS METHOD
+  static async update(
+    email: string,
+    data: { password?: string; otp?: string | null; otpExpires?: Date | null }
+  ) {
+    return prisma.user.update({
+      where: { email },
+      data,
+    });
   }
 }
