@@ -1,9 +1,8 @@
 // src/server.ts
 import app from './app';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './lib/prisma';
 
-const PORT = process.env.PORT || 8000;   // matches .env
-const prisma = new PrismaClient();
+const PORT = process.env.PORT || 8000; 
 
 async function start() {
   await prisma.$connect();

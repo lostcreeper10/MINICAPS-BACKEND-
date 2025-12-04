@@ -1,8 +1,6 @@
 // src/services/token-service.ts
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { v4 as uuidv4 } from 'uuid';
-
-const prisma = new PrismaClient();
 
 export class TokenService {
   static async create(userId: string, type: 'REFRESH' | 'EMAIL_VERIFY' | 'PASSWORD_RESET') {

@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/server.ts",
-    "start": "node ./dist/server.js",
+    "start": "ts-node -r tsconfig-paths/register src/server.ts",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "seed": "ts-node prisma/seed.ts",
+    "studio": "prisma studio"
   },
   "keywords": [],
   "author": "",
@@ -23,9 +24,6 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^7.0.11",
-    "passport": "^0.7.0",
-    "passport-github2": "^0.1.12",
-    "passport-google-oauth20": "^2.0.0",
     "tsconfig-paths": "^4.2.0",
     "uuid": "^13.0.0"
   },
@@ -38,9 +36,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
     "@types/nodemailer": "^7.0.4",
-    "@types/passport": "^1.0.17",
-    "@types/passport-github2": "^1.2.9",
-    "@types/passport-google-oauth20": "^2.0.17",
     "nodemon": "^3.1.10",
     "prisma": "^6.16.3",
     "ts-node": "^10.9.2",

@@ -1,8 +1,6 @@
 // src/repositories/user-repository.ts
-import { PrismaClient } from '@prisma/client';
-import { SignupDto, LoginDto } from '../types';
-
-const prisma = new PrismaClient();
+import { SignupDto, LoginDto, OnboardingDto } from '../types';
+import { prisma } from '../lib/prisma';
 
 export class UserRepository {
   static async findByEmail(email: string) {
@@ -13,10 +11,15 @@ export class UserRepository {
     return prisma.user.create({ data });
   }
 
-  static async updateOnboarding(userId: string, data: any) {
+  static async updateOnboarding(userId: string, data: OnboardingDto & { profileImage?: string }) {
+    const fullName = [data.firstName, data.middleName, data.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
     return prisma.user.update({
       where: { id: userId },
-      data: { ...data, isOnboarded: true },
+      data: { ...data, name: fullName || null, isOnboarded: true },
     });
   }
 

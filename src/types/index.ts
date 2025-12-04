@@ -1,3 +1,4 @@
+// src/types/index.ts
 export interface SignupDto {
   email: string;
   password: string;
@@ -10,13 +11,17 @@ export interface LoginDto {
 }
 
 export interface OnboardingDto {
-  name: string;
-  phone: string;
-  address: string;
+  firstName: string;
+  middleName?: string;
+  lastName: string;
+  phone?: string;
+  address?: string;
+  profileImage?: string;
 }
 
+// UNIFIED FOR USER & ADMIN
 export interface AuthPayload {
-  userId: string;
+  id: string;        // ← This is userId OR adminId
   email: string;
-  role: string;
+  role: 'USER' | 'ADMIN';
 }

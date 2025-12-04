@@ -1,177 +1,211 @@
 // src/controllers/auth-controller.ts
 import { Request, Response } from 'express';
-import { AuthService } from '../services/auth-service';           // USED
-import { OnboardingService } from '../services/onboarding-service';
-import { UserRepository } from '../repositories/user-repository';
-import { addToBlacklist } from '../utils/tokenBlacklist';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { prisma } from '../lib/prisma';
+import { generateOTP } from '../utils/otpStore';
 import nodemailer from 'nodemailer';
 
-// OTP utilities (in-memory)
-import {
-  generateOTP,
-  verifyOTP as verifyStoredOTP,
-  deleteOTP,
-  createResetToken,
-  verifyResetToken,
-  deleteResetToken,
-} from '../utils/otpStore';
-
-// ---------- Email Transporter ----------
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT || 587),
   secure: process.env.SMTP_SECURE === 'true',
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    pass: process.env.SMTP_PASS || process.env.SMTP_PASSWORD,
   },
 });
 
+async function sendOTP(email: string, otp: string) {
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || `"Creeper" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: 'Your Password Reset Code',
+    html: `
+      <div style="font-family: Arial; text-align: center; padding: 30px;">
+        <h2>Password Reset</h2>
+        <h1 style="font-size: 48px; letter-spacing: 10px;">${otp}</h1>
+        <p>Expires in 10 minutes</p>
+      </div>
+    `,
+  });
+}
+
+export interface AuthenticatedRequest extends Request {
+  user?: { id: string; email: string; role: 'USER' | 'ADMIN' };
+}
+
 export class AuthController {
-  
-  //  AuthService-based signup & login
-  
   static async signup(req: Request, res: Response) {
-    try {
-      const result = await AuthService.signup(req.body);
-      res.status(201).json({ success: true, data: result });
-    } catch (e: any) {
-      res.status(400).json({ success: false, message: e.message });
-    }
-  }
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ success: false, message: 'Required' });
 
-  static async login(req: Request, res: Response) {
-    try {
-      const result = await AuthService.login(req.body);
-      res.json({ success: true, data: result });
-    } catch (e: any) {
-      res.status(401).json({ success: false, message: e.message });
-    }
-  }
+    const exists = await prisma.user.findUnique({ where: { email } });
+    if (exists) return res.status(400).json({ success: false, message: 'Email taken' });
 
-  
-  // Onboarding, Me, Logout      
-  
-  static async completeOnboarding(req: Request, res: Response) {
-    try {
-      const userId = (req as any).user.userId;
-      await OnboardingService.complete(userId, req.body);
-      res.json({ success: true, data: { isOnboarded: true } });
-    } catch (e: any) {
-      res.status(400).json({ success: false, message: e.message });
-    }
-  }
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { email: email.toLowerCase(), password: hashed, role: 'USER' },
+    });
 
-  static async me(req: Request, res: Response) {
-    const userId = (req as any).user.userId;
-    const user = await UserRepository.findById(userId);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    const token = jwt.sign({ id: user.id, email: user.email, role: 'USER' }, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
-    res.json({
+    res.status(201).json({
       success: true,
-      data: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        isOnboarded: user.isOnboarded,
-        role: user.role,
-      },
+      data: { token, user: { id: user.id, email: user.email, isOnboarded: false } },
     });
   }
 
-  static async logout(req: Request, res: Response) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(400).json({ success: false, message: 'No token provided' });
+  static async login(req: Request, res: Response) {
+    const { email, password } = req.body;
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-    const token = authHeader.split(' ')[1];
-    try {
-      const decoded = jwt.decode(token) as { exp?: number } | null;
-      const expiresIn = decoded?.exp ? decoded.exp - Math.floor(Date.now() / 1000) : 0;
-      addToBlacklist(token, Math.max(expiresIn, 1));
-    } catch {
-      // ignore
-    }
-    return res.json({ success: true, message: 'Logged out successfully' });
+    if (user.isBlocked) return res.status(403).json({ success: false, message: 'Blocked' });
+
+    const token = jwt.sign({ id: user.id, email: user.email, role: 'USER' }, process.env.JWT_SECRET!, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      data: { token, user: { id: user.id, email: user.email, isOnboarded: user.isOnboarded } },
+    });
   }
 
-  /*  OTP Password Reset (No DB) 
-  
-  // 1. Send OTP via email */
-  static async sendOTP(req: Request, res: Response) {
+  static async forgotPassword(req: Request, res: Response) {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: 'Email is required' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email required' });
 
-    const user = await UserRepository.findByEmail(email);
-    if (!user) {
-      return res.json({ success: true, message: 'If the email exists, an OTP was sent.' });
-    }
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.json({ success: true, message: 'If exists, code sent' });
 
-    const otp = generateOTP(email);
+    const otp = generateOTP(email.toLowerCase());
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    const mailOptions = {
-      from: process.env.SMTP_FROM || `"Creeper" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: 'Your Password Reset Code',
-      text: `Your 6-digit code: ${otp}\nExpires in 5 minutes.`,
-      html: `
-        <div style="font-family: Arial, sans-serif; text-align: center;">
-          <h2>Password Reset</h2>
-          <p>Your code is:</p>
-          <h1 style="font-size: 2em; letter-spacing: 0.2em;">${otp}</h1>
-          <p><strong>Expires in 5 minutes</strong></p>
-        </div>
-      `,
-    };
+    await prisma.passwordReset.upsert({
+      where: { userId: user.id },
+      update: { otp, expires },
+      create: { userId: user.id, otp, expires },
+    });
 
-    try {
-      await transporter.sendMail(mailOptions);
-      return res.json({ success: true, message: 'OTP sent to email' });
-    } catch (err) {
-      console.error('SMTP Error:', err);
-      return res.status(500).json({ message: 'Failed to send email' });
-    }
+    await sendOTP(email, otp);
+    res.json({ success: true, message: 'Code sent' });
   }
 
-  /** 2. Verify OTP → return resetToken */
-  static async verifyOTP(req: Request, res: Response) {
+  static async verifyOtp(req: Request, res: Response) {
     const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ message: 'Email and code required' });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ success: false, message: 'Invalid email' });
 
-    const user = await UserRepository.findByEmail(email);
-    if (!user) return res.status(404).json({ success: false, message: 'No account found' });
-
-    if (!verifyStoredOTP(email, code)) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired code' });
+    const record = await prisma.passwordReset.findUnique({ where: { userId: user.id } });
+    if (!record || record.expires < new Date() || record.otp !== code) {
+      return res.status(400).json({ success: false, message: 'Invalid/expired code' });
     }
 
-    deleteOTP(email);
-    const resetToken = createResetToken(email); // 10 min
+    const resetToken = jwt.sign({ id: user.id, email: user.email, role: 'USER' }, process.env.JWT_SECRET!, { expiresIn: '15m' });
+    await prisma.passwordReset.delete({ where: { userId: user.id } });
 
-    return res.json({ success: true, message: 'OTP verified', resetToken });
+    res.json({ success: true, data: { resetToken } });
   }
 
-  /** 3. Reset password with resetToken */
   static async resetPassword(req: Request, res: Response) {
-    const { email, password, resetToken } = req.body;
-    if (!email || !password || !resetToken) {
-      return res.status(400).json({ message: 'Email, password, and resetToken required' });
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({ success: false, message: 'Token and password required' });
     }
 
-    const user = await UserRepository.findByEmail(email);
-    if (!user) return res.status(404).json({ success: false, message: 'No account found' });
-
-    if (!verifyResetToken(email, resetToken)) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
-    }
+    // Verify the reset token (short-lived JWT from verifyOtp)
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
 
     const hashed = await bcrypt.hash(password, 10);
-    await UserRepository.updateUserPass(email, { password: hashed });
 
-    deleteResetToken(email);
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { password: hashed },
+    });
 
-    return res.json({ success: true, message: 'Password updated successfully' });
+    return res.json({ success: true, message: 'Password reset successful' });
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError' || error.name === 'JsonWebTokenError') {
+      return res.status(400).json({ success: false, message: 'Invalid or expired token' });
+    }
+    console.error('Reset password error:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+  // REAL ONBOARDING — THIS FIXES YOUR 501 ERROR
+  static async completeOnboarding(req: AuthenticatedRequest, res: Response) {
+    const userId = req.user!.id;
+    const { firstName, middleName, lastName, phone, address, profileImage } = req.body;
+
+    if (!firstName?.trim() || !lastName?.trim()) {
+      return res.status(400).json({ success: false, message: 'First and last name required' });
+    }
+
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          firstName,
+          middleName: middleName || null,
+          lastName,
+          name: [firstName, middleName, lastName].filter(Boolean).join(' ').trim(),
+          phone: phone || null,
+          address: address || null,
+          profileImage: profileImage || null,
+          isOnboarded: true,
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          address: true,
+          profileImage: true,
+          isOnboarded: true,
+        },
+      });
+
+      return res.json({ success: true, data: updatedUser });
+    } catch (error) {
+      console.error('Onboarding error:', error);
+      return res.status(500).json({ success: false, message: 'Failed to save profile' });
+    }
+  }
+
+  // FIXED /me ENDPOINT
+  static async me(req: AuthenticatedRequest, res: Response) {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: req.user!.id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          address: true,
+          profileImage: true,
+          isOnboarded: true,
+        },
+      });
+
+      if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+      res.json({ success: true, data: user });
+    } catch (error) {
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  }
+
+  static async logout(_req: Request, res: Response) {
+    res.json({ success: true, message: 'Logged out successfully' });
   }
 }
