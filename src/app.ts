@@ -6,6 +6,7 @@ import productRoutes from './routes/product-routes';
 import orderRoutes from './routes/order-routes';
 import accountRoutes from './routes/account-routes';
 import adminRoutes from './routes/admin-routes';
+import cartRoutes from './routes/cart-routes';
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/account', accountRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/cart', cartRoutes);
 
 app.get('/', (_, res) => {
   res.json({ message: 'Creeper API Running' });

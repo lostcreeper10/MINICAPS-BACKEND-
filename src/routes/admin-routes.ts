@@ -8,6 +8,11 @@ const router = Router();
 // PUBLIC
 router.post('/login', AdminController.login);
 
+// Test endpoint to verify admin route is accessible
+router.get('/test', (req, res) => {
+  res.json({ success: true, message: 'Admin routes are working' });
+});
+
 // PROTECTED
 router.use(requireAdmin);
 

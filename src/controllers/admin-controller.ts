@@ -24,7 +24,9 @@ const login = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Email and password required' });
     }
 
+    console.log(`[Admin Login] Attempting login for: ${email}`);
     const result = await AdminService.login(email, password);
+    console.log(`[Admin Login] Success for: ${email}`);
 
     return res.json({
       success: true,
@@ -34,6 +36,7 @@ const login = async (req: Request, res: Response) => {
       },
     });
   } catch (err: any) {
+    console.error(`[Admin Login] Error:`, err.message);
     return res.status(401).json({
       success: false,
       message: err.message || 'Invalid credentials',
@@ -80,11 +83,10 @@ const listProducts = async (_req: Request, res: Response) => {
 };
 
 const createProduct = async (req: any, res: Response) => {
-  const userId = req.user.id;
   const { name, description, price, image, stock, categoryName, isActive = true } = req.body;
 
   if (!name || !price || !image) {
-    return res.status(400).json({ success: false, message: 'Name, price, and image required' });
+    return res.status(400).json({ success: false, message: 'Name, price, and image are required' });
   }
 
   try {
@@ -93,46 +95,78 @@ const createProduct = async (req: any, res: Response) => {
     const existing = await prisma.product.findUnique({ where: { slug } });
     if (existing) slug = `${slug}-${Date.now()}`;
 
+    // Note: createdById references User table, but admins are in Admin table
+    // Since createdById is optional, we set it to null for admin-created products
     const product = await prisma.product.create({
       data: {
         name,
         slug,
-        description,
+        description: description || null,
         price: new Prisma.Decimal(price),
         image,
         stock: stock ?? 0,
         isActive,
         categoryId: category.id,
-        createdById: userId,
+        createdById: null, // Admin-created products don't have a user creator
       },
       include: { category: true },
     });
 
+    console.log(`[Create Product] Product created: ${product.name} by admin`);
     return res.status(201).json({ success: true, data: product });
-  } catch (err) {
-    return res.status(400).json({ success: false, message: 'Failed to create product' });
+  } catch (err: any) {
+    console.error('[Create Product] Error:', err);
+    return res.status(400).json({ 
+      success: false, 
+      message: err.message || 'Failed to create product' 
+    });
   }
 };
 
 const updateProduct = async (req: Request, res: Response) => {
   const { productId } = req.params;
-  const updates: any = { ...req.body };
-  if (updates.price) updates.price = new Prisma.Decimal(updates.price);
-  if (updates.categoryName) {
-    const category = await ensureCategory(updates.categoryName);
-    updates.categoryId = category.id;
-    delete updates.categoryName;
-  }
+  const { name, description, price, image, stock, categoryName, isActive } = req.body;
 
   try {
+    // Build update data object with only provided fields
+    const updateData: any = {};
+    
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = new Prisma.Decimal(price);
+    if (image !== undefined) updateData.image = image;
+    if (stock !== undefined) updateData.stock = stock;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    
+    // Handle category
+    if (categoryName !== undefined) {
+      const category = await ensureCategory(categoryName);
+      updateData.categoryId = category.id;
+    }
+
+    // Generate slug if name is being updated
+    if (name !== undefined) {
+      let slug = slugify(name) || `product-${Date.now()}`;
+      const existing = await prisma.product.findFirst({ 
+        where: { slug, id: { not: productId } } 
+      });
+      if (existing) slug = `${slug}-${Date.now()}`;
+      updateData.slug = slug;
+    }
+
     const product = await prisma.product.update({
       where: { id: productId },
-      data: updates,
+      data: updateData,
       include: { category: true },
     });
+    
     return res.json({ success: true, data: product });
-  } catch (err) {
-    return res.status(400).json({ success: false, message: 'Failed to update product' });
+  } catch (err: any) {
+    console.error('[Update Product] Error:', err);
+    return res.status(400).json({ 
+      success: false, 
+      message: err.message || 'Failed to update product' 
+    });
   }
 };
 
@@ -140,9 +174,17 @@ const deleteProduct = async (req: Request, res: Response) => {
   const { productId } = req.params;
   try {
     await prisma.product.delete({ where: { id: productId } });
-    return res.json({ success: true, message: 'Product deleted' });
-  } catch (err) {
-    return res.status(400).json({ success: false, message: 'Failed to delete product' });
+    console.log(`[Delete Product] Product deleted: ${productId}`);
+    return res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (err: any) {
+    console.error('[Delete Product] Error:', err);
+    if (err.code === 'P2025') {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    return res.status(400).json({ 
+      success: false, 
+      message: err.message || 'Failed to delete product' 
+    });
   }
 };
 
