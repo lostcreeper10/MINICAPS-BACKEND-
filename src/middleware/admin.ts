@@ -27,7 +27,7 @@ export const requireAdmin = async (req: Request, res: Response, next: NextFuncti
       return res.status(403).json({ success: false, message: 'Admin access only' });
     }
 
-    const admin = await prisma.admin.findUnique({ where: { id: payload.adminId || payload.id } });
+    const admin = await prisma.admin.findUnique({ where: { id: payload.id } });
     if (!admin || !admin.isActive) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }

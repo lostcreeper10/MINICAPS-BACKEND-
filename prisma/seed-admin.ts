@@ -1,4 +1,5 @@
 // prisma/seed-admin.ts   ← REPLACE ENTIRE FILE WITH THIS
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
